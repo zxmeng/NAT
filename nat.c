@@ -26,11 +26,7 @@ struct table_entry {
     uint32_t iaddr;    // internal ip address
     uint16_t iport;    // internal port number
     uint16_t tport;    // translated port number, range [10000, 12000]
-    STATUS status;
-
-    table_entry() {
-    	status = NOT_USED;
-    }
+    enum STATUS status;
 };
 
 static int subnet_mask;
@@ -40,8 +36,8 @@ struct table_entry* translation_table = malloc(sizeof(struct table_entry) * MAX_
 
 int map_internal_to_tport(uint32_t iaddr, uint16_t iport) {
     for (int i = 0; i < MAX_ENTRY; i++) {
-        if (translation_table[i]->status != NOT_USED) {
-            if (translation_table[i]->iaddr == iaddr && translation_table[i]->iport == iport) {
+        if (translation_table[i].status != NOT_USED) {
+            if (translation_table[i].iaddr == iaddr && translation_table[i].iport == iport) {
                 return i;
             }
         }
@@ -51,8 +47,8 @@ int map_internal_to_tport(uint32_t iaddr, uint16_t iport) {
 
 int map_tport_to_internal(uint16_t tport){
     for (int i = 0; i < MAX_ENTRY; i++) {
-        if (translation_table[i]->status != NOT_USED) {
-            if (translation_table[i]->tport == tport) {
+        if (translation_table[i].status != NOT_USED) {
+            if (translation_table[i].tport == tport) {
                 return i;
             }
         }
@@ -64,7 +60,7 @@ int map_tport_to_internal(uint16_t tport){
 int create_new_entry(uint32_t iaddr, uint16_t iport){
     int i = 0;
     for (i = 0; i < MAX_ENTRY; i++) {
-        if (translation_table[i]->status == NOT_USED) {
+        if (translation_table[i].status == NOT_USED) {
             break;
         }
     }
@@ -74,19 +70,19 @@ int create_new_entry(uint32_t iaddr, uint16_t iport){
         return -1;
     }
 
-    translation_table[i]->iaddr = iaddr;
-    translation_table[i]->iport = iport;
-    translation_table[i]->tport = i + 10000;
-    translation_table[i]->status = SYN;
+    translation_table[i].iaddr = iaddr;
+    translation_table[i].iport = iport;
+    translation_table[i].tport = i + 10000;
+    translation_table[i].status = SYN;
 
     return i;
 }
 
 void delete_entry(int i){
-    translation_table[i]->iaddr = 0;
-    translation_table[i]->iport = 0;
-    translation_table[i]->tport = 0;
-    translation_table[i]->status = NOT_USED;
+    translation_table[i].iaddr = 0;
+    translation_table[i].iport = 0;
+    translation_table[i].tport = 0;
+    translation_table[i].status = NOT_USED;
 }
 
 /*
@@ -95,7 +91,7 @@ void delete_entry(int i){
 static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_data *pkt, void *data) {
     unsigned int id = 0;
     int index;
-    OPTION opt;
+    enum OPTION opt;
     uint32_t action;
 
     // nfqueue packet header
@@ -271,7 +267,7 @@ int main(int argc, char **argv){
     }
 
     // bind socket and install a callback on queue 0
-    if (!(qh = nfq_create_queue(h,  0, &Callback, NULL))) {
+    if (!(qh = nfq_create_queue(h, 0, &Callback, NULL))) {
         fprintf(stderr, "Error: nfq_create_queue()\n");
         exit(1);
     }
