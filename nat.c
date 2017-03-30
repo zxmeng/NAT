@@ -9,7 +9,7 @@
 
 enum STATUS {
     NOT_USED,   // port is not used by any connection
-    SYN,        // 
+    CONN,       
     FIN_IN,
     FIN_OUT,
     FIN_FIN
@@ -23,18 +23,22 @@ enum OPTION{
 };
 
 struct table_entry {
-    __u32 iaddr;    // internal ip address
-    __u16 iport;    // internal port number
-    __u16 tport;    // translated port number, range [10000, 12000]
-    STATUS status = NOT_USED;
+    uint32_t iaddr;    // internal ip address
+    uint16_t iport;    // internal port number
+    uint16_t tport;    // translated port number, range [10000, 12000]
+    STATUS status;
+
+    table_entry() {
+    	status = NOT_USED;
+    }
 };
 
 static int subnet_mask;
-static __u32 public_ip;
-static __u32 private_ip;
+static uint32_t public_ip;
+static uint32_t private_ip;
 struct table_entry* translation_table = malloc(sizeof(struct table_entry) * MAX_ENTRY);
 
-int map_internal_to_tport(__u32 iaddr, __u16 iport) {
+int map_internal_to_tport(uint32_t iaddr, uint16_t iport) {
     for (int i = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i]->status != NOT_USED) {
             if (translation_table[i]->iaddr == iaddr && translation_table[i]->iport == iport) {
@@ -45,7 +49,7 @@ int map_internal_to_tport(__u32 iaddr, __u16 iport) {
     return -1;
 }
 
-int map_tport_to_internal(__16 tport){
+int map_tport_to_internal(uint16_t tport){
     for (int i = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i]->status != NOT_USED) {
             if (translation_table[i]->tport == tport) {
@@ -57,7 +61,7 @@ int map_tport_to_internal(__16 tport){
 }
 
 
-int create_new_entry(__u32 iaddr, __u16 iport){
+int create_new_entry(uint32_t iaddr, uint16_t iport){
     int i = 0;
     for (i = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i]->status == NOT_USED) {
@@ -106,9 +110,9 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
     }
 
     // source IP
-    __u32 saddr = iph->saddr;
+    uint32_t saddr = iph->saddr;
     // destination IP
-    __u32 daddr = iph->daddr;
+    uint32_t daddr = iph->daddr;
 
     action = NF_ACCEPT;
     if (iph->protocol == IPPROTO_TCP) {
@@ -116,9 +120,9 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         // TCP packets
         struct tcphdr * tcph= (struct tcphdr*) (((char*) iph) + iph->ihl<< 2);
         // source port
-        __u16 sport = tcph->source;
+        uint16_t sport = tcph->source;
         // destination port
-        __u16 dport = tcph->dest;
+        uint16_t dport = tcph->dest;
 
         if (tcph->ack) {
             opt = ACK;
@@ -140,7 +144,7 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
                 case FIN:
                 // check if packet is a RST packet. if yes => delete entry
                     switch (translation_table[index].status) {
-                    case SYN:
+                    case CONN:
                         translation_table[index].status = FIN_OUT;
                     break;
                     case FIN_IN:
@@ -165,12 +169,12 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
                 break;
                 }
             } else {
+            	action = NF_DROP;
                 if (tcph->syn) {
-                    if ((index = create_new_entry(saddr, sport)) < 0) {
-                        action = NF_DROP;
+                    if ((index = create_new_entry(saddr, sport)) >= 0) {
+                        translation_table[index].status = CONN;
+                        action = NF_ACCEPT;
                     }
-                } else {
-                    action = NF_DROP;
                 }
             }
 
@@ -178,6 +182,7 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
             iph->saddr = public_ip;
             iph->checksum = ip_checksum(iph);
             tcph->checksum = tcp_checksum(iph);
+
         } else {
             // inbound traffic
             if ((index = map_tport_to_internal(dport)) >= 0) {
@@ -190,7 +195,7 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
                 case FIN:
                 // check if packet is a RST packet. if yes => delete entry
                     switch (translation_table[index].status) {
-                    case SYN:
+                    case CONN:
                         translation_table[index].status = FIN_IN;
                     break;
                     case FIN_OUT:
