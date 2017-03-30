@@ -2,7 +2,11 @@
 #include <stdlib.h>
 #include "checksum.h"
 #include <netinet/in.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <linux/netfilter.h>  
+#include <netinet/tcp.h>
+#include <netinet/ip.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
 
 #define MAX_ENTRY 2001
@@ -30,12 +34,17 @@ struct table_entry {
 };
 
 static int subnet_mask;
-static uint32_t public_ip;
-static uint32_t private_ip;
-struct table_entry* translation_table = malloc(sizeof(struct table_entry) * MAX_ENTRY);
+static struct in_addr public_ip;
+static struct in_addr private_ip;
+//static uint32_t public_ip;
+//static uint32_t private_ip;
+//static unsigned long public_ip;
+//static unsigned long private_ip;
+struct table_entry translation_table[MAX_ENTRY];
 
 int map_internal_to_tport(uint32_t iaddr, uint16_t iport) {
-    for (int i = 0; i < MAX_ENTRY; i++) {
+    int i;
+    for (i = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i].status != NOT_USED) {
             if (translation_table[i].iaddr == iaddr && translation_table[i].iport == iport) {
                 return i;
@@ -46,7 +55,8 @@ int map_internal_to_tport(uint32_t iaddr, uint16_t iport) {
 }
 
 int map_tport_to_internal(uint16_t tport){
-    for (int i = 0; i < MAX_ENTRY; i++) {
+    int i;
+    for (i = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i].status != NOT_USED) {
             if (translation_table[i].tport == tport) {
                 return i;
@@ -58,7 +68,7 @@ int map_tport_to_internal(uint16_t tport){
 
 
 int create_new_entry(uint32_t iaddr, uint16_t iport){
-    int i = 0;
+    int i;
     for (i = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i].status == NOT_USED) {
             break;
@@ -112,9 +122,9 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
 
     action = NF_ACCEPT;
     if (iph->protocol == IPPROTO_TCP) {
-        unsigned int local_mask= 0xffffffff << (32 – subnet_mask);
+        unsigned int local_mask = 0xffffffff << (32 - subnet_mask);
         // TCP packets
-        struct tcphdr * tcph= (struct tcphdr*) (((char*) iph) + iph->ihl<< 2);
+        struct tcphdr * tcph = (struct tcphdr*) (((char*) iph) + (iph->ihl << 2));
         // source port
         uint16_t sport = tcph->source;
         // destination port
@@ -133,7 +143,7 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
             opt = RST;
         }
 
-        if ((ntohl(iph->saddr) & local_mask) == local_network) {
+        if ((ntohl(iph->saddr) & local_mask) == (ntohl(private_ip.s_addr) & local_mask)) {
             // outbound traffic
             if ((index = map_internal_to_tport(saddr, sport)) >= 0) {
                 switch (opt) {
@@ -175,17 +185,17 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
             }
 
             tcph->source = translation_table[index].tport;
-            iph->saddr = public_ip;
-            iph->checksum = ip_checksum(iph);
-            tcph->checksum = tcp_checksum(iph);
+            iph->saddr = public_ip.s_addr;
+            iph->check = ip_checksum((unsigned char*)iph);
+            tcph->check = tcp_checksum((unsigned char*)iph);
 
         } else {
             // inbound traffic
             if ((index = map_tport_to_internal(dport)) >= 0) {
                 tcph->dest = translation_table[index].iport;
                 iph->daddr = translation_table[index].iaddr;
-                iph->checksum = ip_checksum(iph);
-                tcph->checksum = tcp_checksum(iph);
+                iph->check = ip_checksum((unsigned char*)iph);
+                tcph->check = tcp_checksum((unsigned char*)iph);
 
                 switch (opt) {
                 case FIN:
@@ -244,8 +254,8 @@ int main(int argc, char **argv){
         exit(-1);
     }
 
-    public_ip = inet_aton(inet_addr(argv[1]));
-    private_ip = inet_aton(inet_addr(argv[2]));
+    inet_aton((const char*)inet_addr(argv[1]), &public_ip);
+    inet_aton((const char*)inet_addr(argv[2]), &private_ip);
     subnet_mask = atoi(argv[3]);
 
     // Open library handle
