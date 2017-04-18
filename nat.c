@@ -68,7 +68,7 @@ int map_tport_to_internal(uint16_t tport){
 
 
 int create_new_entry(uint32_t iaddr, uint16_t iport){
-    int i;
+    uint16_t i;
     for (i = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i].status == NOT_USED) {
             break;
@@ -82,7 +82,7 @@ int create_new_entry(uint32_t iaddr, uint16_t iport){
 
     translation_table[i].iaddr = iaddr;
     translation_table[i].iport = iport;
-    translation_table[i].tport = i + 10000;
+    translation_table[i].tport = ntohs(i + 10000);
     translation_table[i].status = SYN;
 
     return i;
@@ -99,6 +99,8 @@ void delete_entry(int i){
  * Callback function installed to netfilter queue
  */
 static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_data *pkt, void *data) {
+    printf("---------------------------------BEG OF CALLBACK--------------------------------------\n");
+
     unsigned int id = 0;
     int index;
     enum OPTION opt;
@@ -120,6 +122,9 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
     // destination IP
     uint32_t daddr = iph->daddr;
 
+    printf("source IP: %s\n", inet_ntoa(*(struct in_addr *)&saddr));
+    printf("destin IP: %s\n", inet_ntoa(*(struct in_addr *)&daddr));
+
     action = NF_ACCEPT;
     if (iph->protocol == IPPROTO_TCP) {
         unsigned int local_mask = 0xffffffff << (32 - subnet_mask);
@@ -129,6 +134,8 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         uint16_t sport = tcph->source;
         // destination port
         uint16_t dport = tcph->dest;
+        printf("source Port: %d\n", htons(sport));
+        printf("destin Port: %d\n", htons(dport));
 
         if (tcph->ack) {
             opt = ACK;
@@ -138,6 +145,7 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         }
         else if (tcph->syn) {
             opt = SYN;
+            printf("SYN\n");
         }
         else if (tcph->rst) {
             opt = RST;
@@ -172,12 +180,15 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
                 break; 
 
                 default:
+                    printf("outbound, default\n");
                 break;
                 }
             } else {
             	action = NF_DROP;
                 if (tcph->syn) {
+                    printf("inside tcph->syn\n");
                     if ((index = create_new_entry(saddr, sport)) >= 0) {
+                        printf("inside tcph->syn check index\n");
                         translation_table[index].status = CONN;
                         action = NF_ACCEPT;
                     }
@@ -185,7 +196,9 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
             }
 
             tcph->source = translation_table[index].tport;
+            printf("translated source port: %d\n", htons(tcph->source));
             iph->saddr = public_ip.s_addr;
+            printf("translated source ip: %s\n", inet_ntoa(*(struct in_addr *)&iph->saddr));
             iph->check = ip_checksum((unsigned char*)iph);
             tcph->check = tcp_checksum((unsigned char*)iph);
 
@@ -233,9 +246,13 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         // Others, can be ignored
         action = NF_DROP;
     }
-
+    int flag = (action == NF_ACCEPT ? 1 : 0);
+    if (flag) 
+    {
+        printf("NF_ACCEPT\n");
+    }
+    printf("---------------------------------END OF CALLBACK--------------------------------------\n");
     return nfq_set_verdict(qh, id, action, 0, NULL);
-
 }
 
 /*
@@ -253,9 +270,11 @@ int main(int argc, char **argv){
         fprintf(stderr, "Usage: ./NAT <public ip> <internal ip> <subnet mask>\n");
         exit(-1);
     }
+    printf("%s\n", argv[1]);
+    printf("%s\n", argv[2]);
 
-    inet_aton((const char*)inet_addr(argv[1]), &public_ip);
-    inet_aton((const char*)inet_addr(argv[2]), &private_ip);
+    inet_aton(argv[1], &public_ip);
+    inet_aton(argv[2], &private_ip);
     subnet_mask = atoi(argv[3]);
 
     // Open library handle
