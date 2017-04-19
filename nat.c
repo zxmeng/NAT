@@ -53,14 +53,16 @@ void print_NAT_table() {
     for (i = 0, j = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i].status != NOT_USED) {
             j++;
-            struct in_addr internal_ip_addr;
-            internal_ip_addr.s_addr = translation_table[i].iaddr;
             unsigned int internal_port_to_print = ntohs(translation_table[i].iport);
-            int translated_port_to_print = ntohs(translation_table[i].tport);
-            struct in_addr translated_ip_addr;
-            translated_ip_addr.s_addr = public_ip.s_addr;
+            unsigned int translated_port_to_print = ntohs(translation_table[i].tport);
+            char buf1[255];
+            char buf2[255];
+            struct in_addr tmp;
+            tmp.s_addr = translation_table[i].iaddr;
+            strcpy(buf1, inet_ntoa(tmp));
+            strcpy(buf2, inet_ntoa(public_ip));
             printf("---------------------------------------------------------------------------------------------------------------\n");
-            printf("|%*d|%25s|%*u|%25s|%*u|\n", 5, j, inet_ntoa(internal_ip_addr), 25, internal_port_to_print, inet_ntoa(translated_ip_addr), 25, translated_port_to_print);
+            printf("|%5d|%25s|%25u|%25s|%25u|\n", j, buf1, internal_port_to_print, buf2, translated_port_to_print);
         }
     }
     printf("---------------------------------------------------------------------------------------------------------------\n");
@@ -114,6 +116,7 @@ int create_new_entry(uint32_t iaddr, uint16_t iport){
     translation_table[i].tport = htons(i + 10000);
     // ???
     translation_table[i].status = CONN;
+    
     print_NAT_table();
     return i;
 }
