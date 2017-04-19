@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "checksum.h"
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -19,7 +20,7 @@ enum STATUS {
     FIN_FIN
 };
 
-enum OPTION{
+enum OPTION {
     SYN,
     ACK,
     FIN,
@@ -27,9 +28,9 @@ enum OPTION{
 };
 
 struct table_entry {
-    uint32_t iaddr;    // internal ip address
-    uint16_t iport;    // internal port number
-    uint16_t tport;    // translated port number, range [10000, 12000]
+    uint32_t iaddr;    // internal ip address network order
+    uint16_t iport;    // internal port number network order
+    uint16_t tport;    // translated port number, range [10000, 12000] network order
     enum STATUS status;
 };
 
@@ -40,7 +41,34 @@ static struct in_addr private_ip;
 //static uint32_t private_ip;
 //static unsigned long public_ip;
 //static unsigned long private_ip;
-struct table_entry translation_table[MAX_ENTRY];
+struct table_entry* translation_table;
+
+void print_NAT_table() {
+    int i, j;
+    printf("NAT TABLE\n");
+    printf("---------------------------------------------------------------------------------------------------------------\n");
+    printf("|%5s|%25s|%25s|%25s|%25s|\n", "ENTRY", "Internal IP address", "Internal Port number", "Translated IP address", "Translated Port number");
+    for (i = 0, j = 0; i < MAX_ENTRY; i++) {
+        if (translation_table[i].status != NOT_USED) {
+            i++;
+            j++;
+            struct in_addr internal_ip_addr;
+            internal_ip_addr.s_addr = translation_table[i - 1].iaddr;
+            unsigned int internal_port_to_print = ntohs(translation_table[i - 1].iport);
+            int translated_port_to_print = ntohs(translation_table[i - 1].tport);
+            struct in_addr translated_ip_addr;
+            translated_ip_addr.s_addr = public_ip.s_addr;
+            printf("---------------------------------------------------------------------------------------------------------------\n");
+            printf("|%*d|%25s|%*u|%25s|%*u|\n", 5, j, inet_ntoa(internal_ip_addr), 25, internal_port_to_print, inet_ntoa(translated_ip_addr), 25, translated_port_to_print);
+        }
+    }
+    printf("---------------------------------------------------------------------------------------------------------------\n");
+}
+
+void initialize_NAT_table() {
+    translation_table = (struct table_entry*)(malloc(sizeof(struct table_entry) * MAX_ENTRY));
+    memset(translation_table, sizeof(struct table_entry) * MAX_ENTRY, 0);
+}
 
 int map_internal_to_tport(uint32_t iaddr, uint16_t iport) {
     int i;
@@ -82,9 +110,10 @@ int create_new_entry(uint32_t iaddr, uint16_t iport){
 
     translation_table[i].iaddr = iaddr;
     translation_table[i].iport = iport;
-    translation_table[i].tport = ntohs(i + 10000);
-    translation_table[i].status = SYN;
-
+    translation_table[i].tport = htons(i + 10000);
+    // ???
+    translation_table[i].status = CONN;
+    print_NAT_table();
     return i;
 }
 
@@ -93,13 +122,14 @@ void delete_entry(int i){
     translation_table[i].iport = 0;
     translation_table[i].tport = 0;
     translation_table[i].status = NOT_USED;
+    print_NAT_table();
 }
 
 /*
  * Callback function installed to netfilter queue
  */
 static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_data *pkt, void *data) {
-    printf("---------------------------------BEG OF CALLBACK--------------------------------------\n");
+    printf("\n---------------------------------BEG OF CALLBACK--------------------------------------\n");
 
     unsigned int id = 0;
     int index;
@@ -122,9 +152,6 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
     // destination IP
     uint32_t daddr = iph->daddr;
 
-    printf("source IP: %s\n", inet_ntoa(*(struct in_addr *)&saddr));
-    printf("destin IP: %s\n", inet_ntoa(*(struct in_addr *)&daddr));
-
     action = NF_ACCEPT;
     if (iph->protocol == IPPROTO_TCP) {
         unsigned int local_mask = 0xffffffff << (32 - subnet_mask);
@@ -134,8 +161,6 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         uint16_t sport = tcph->source;
         // destination port
         uint16_t dport = tcph->dest;
-        printf("source Port: %d\n", htons(sport));
-        printf("destin Port: %d\n", htons(dport));
 
         if (tcph->ack) {
             opt = ACK;
@@ -145,7 +170,6 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         }
         else if (tcph->syn) {
             opt = SYN;
-            printf("SYN\n");
         }
         else if (tcph->rst) {
             opt = RST;
@@ -180,15 +204,12 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
                 break; 
 
                 default:
-                    printf("outbound, default\n");
                 break;
                 }
             } else {
             	action = NF_DROP;
                 if (tcph->syn) {
-                    printf("inside tcph->syn\n");
                     if ((index = create_new_entry(saddr, sport)) >= 0) {
-                        printf("inside tcph->syn check index\n");
                         translation_table[index].status = CONN;
                         action = NF_ACCEPT;
                     }
@@ -196,7 +217,7 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
             }
 
             tcph->source = translation_table[index].tport;
-            printf("translated source port: %d\n", htons(tcph->source));
+            printf("translated source port: %d\n", ntohs(tcph->source));
             iph->saddr = public_ip.s_addr;
             printf("translated source ip: %s\n", inet_ntoa(*(struct in_addr *)&iph->saddr));
             iph->check = ip_checksum((unsigned char*)iph);
@@ -246,19 +267,22 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         // Others, can be ignored
         action = NF_DROP;
     }
-    int flag = (action == NF_ACCEPT ? 1 : 0);
-    if (flag) 
-    {
+    if (action == NF_ACCEPT) {
         printf("NF_ACCEPT\n");
+        printf("\n---------------------------------END OF CALLBACK--------------------------------------\n");
+        return nfq_set_verdict(qh, id, action, data_len, payload);
+    } else {
+        printf("NF_DROP\n");
+        printf("\n---------------------------------END OF CALLBACK--------------------------------------\n");
+        return nfq_set_verdict(qh, id, action, 0, NULL); 
     }
-    printf("---------------------------------END OF CALLBACK--------------------------------------\n");
-    return nfq_set_verdict(qh, id, action, 0, NULL);
 }
 
 /*
  * Main program
  */
 int main(int argc, char **argv){
+    initialize_NAT_table();
     struct nfq_handle *h;
     struct nfq_q_handle *qh;
     struct nfnl_handle *nh;
@@ -308,7 +332,6 @@ int main(int argc, char **argv){
     }
 
     fd = nfq_fd(h);
-
     while ((len = recv(fd, buf, sizeof(buf), 0)) && len >= 0) {
         nfq_handle_packet(h, buf, len);
 

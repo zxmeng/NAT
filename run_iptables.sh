@@ -1,8 +1,8 @@
 #!/bin/bash
 
 VMID="4"                                 # group no.
-#IP="10.3.1.$(expr ${VMID})"      # public interface
-IP="10.3.1.$(expr ${VMID} \+ 200)"      # public interface
+IP="10.3.1.$(expr ${VMID})"      # public interface
+#IP="10.3.1.$(expr ${VMID} \+ 200)"      # public interface
 LAN="10.0.${VMID}.0"                    # private LAN network address (without subnet mask)
 MASK="24"
 
@@ -21,8 +21,6 @@ echo "Setup iptables for VM Group ID = ${VMID}, Public IP = ${IP}, Internal netw
 echo ""
 
 echo "1" >  /proc/sys/net/ipv4/ip_forward
-
-echo "hello"
 
 # clear all routes
 iptables -t nat -F
