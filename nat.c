@@ -45,18 +45,21 @@ struct table_entry* translation_table;
 
 void print_NAT_table() {
     int i, j;
-    printf("\nNAT TABLE\n");
+    printf("NAT TABLE\n");
     printf("---------------------------------------------------------------------------------------------------------------\n");
     printf("|%5s|%25s|%25s|%25s|%25s|\n", "ENTRY", "Internal IP address", "Internal Port number", "Translated IP address", "Translated Port number");
     for (i = 0, j = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i].status != NOT_USED) {
+            i++;
             j++;
             struct in_addr internal_ip_addr;
-            internal_ip_addr.s_addr = translation_table[i].iaddr;
-            unsigned int internal_port_to_print = ntohs(translation_table[i].iport);
-            int translated_port_to_print = ntohs(translation_table[i].tport);
+            internal_ip_addr.s_addr = translation_table[i - 1].iaddr;
+            unsigned int internal_port_to_print = ntohs(translation_table[i - 1].iport);
+            int translated_port_to_print = ntohs(translation_table[i - 1].tport);
+            struct in_addr translated_ip_addr;
+            translated_ip_addr.s_addr = public_ip.s_addr;
             printf("---------------------------------------------------------------------------------------------------------------\n");
-            printf("|%*d|%25s|%*u|%25s|%*u|\n", 5, j, inet_ntoa(internal_ip_addr), 25, internal_port_to_print, inet_ntoa(public_ip), 25, translated_port_to_print);
+            printf("|%*d|%25s|%*u|%25s|%*u|\n", 5, j, inet_ntoa(internal_ip_addr), 25, internal_port_to_print, inet_ntoa(translated_ip_addr), 25, translated_port_to_print);
         }
     }
     printf("---------------------------------------------------------------------------------------------------------------\n");
@@ -126,6 +129,8 @@ void delete_entry(int i){
  * Callback function installed to netfilter queue
  */
 static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_data *pkt, void *data) {
+    printf("\n---------------------------------BEG OF CALLBACK--------------------------------------\n");
+
     unsigned int id = 0;
     int index;
     enum OPTION opt;
@@ -159,19 +164,15 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
 
         if (tcph->ack) {
             opt = ACK;
-            printf("ACK\n");
         }
         else if (tcph->fin) {
             opt = FIN;
-            printf("FIN\n");
         }
         else if (tcph->syn) {
             opt = SYN;
-            printf("SYN\n");
         }
         else if (tcph->rst) {
             opt = RST;
-            printf("RST\n");
         }
 
         if ((ntohl(iph->saddr) & local_mask) == (ntohl(private_ip.s_addr) & local_mask)) {
@@ -209,13 +210,16 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
             	action = NF_DROP;
                 if (tcph->syn) {
                     if ((index = create_new_entry(saddr, sport)) >= 0) {
+                        translation_table[index].status = CONN;
                         action = NF_ACCEPT;
                     }
                 }
             }
-            printf("pip : %s",inet_ntoa(public_ip));
+
             tcph->source = translation_table[index].tport;
+            printf("translated source port: %d\n", ntohs(tcph->source));
             iph->saddr = public_ip.s_addr;
+            printf("translated source ip: %s\n", inet_ntoa(*(struct in_addr *)&iph->saddr));
             iph->check = ip_checksum((unsigned char*)iph);
             tcph->check = tcp_checksum((unsigned char*)iph);
 
@@ -265,9 +269,11 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
     }
     if (action == NF_ACCEPT) {
         printf("NF_ACCEPT\n");
+        printf("\n---------------------------------END OF CALLBACK--------------------------------------\n");
         return nfq_set_verdict(qh, id, action, data_len, payload);
     } else {
         printf("NF_DROP\n");
+        printf("\n---------------------------------END OF CALLBACK--------------------------------------\n");
         return nfq_set_verdict(qh, id, action, 0, NULL); 
     }
 }
