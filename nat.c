@@ -22,8 +22,10 @@ enum STATUS {
 
 enum OPTION {
     SYN,
+    SYN_ACK,
     ACK,
     FIN,
+    FIN_ACK,
     RST
 };
 
@@ -50,12 +52,11 @@ void print_NAT_table() {
     printf("|%5s|%25s|%25s|%25s|%25s|\n", "ENTRY", "Internal IP address", "Internal Port number", "Translated IP address", "Translated Port number");
     for (i = 0, j = 0; i < MAX_ENTRY; i++) {
         if (translation_table[i].status != NOT_USED) {
-            i++;
             j++;
             struct in_addr internal_ip_addr;
-            internal_ip_addr.s_addr = translation_table[i - 1].iaddr;
-            unsigned int internal_port_to_print = ntohs(translation_table[i - 1].iport);
-            int translated_port_to_print = ntohs(translation_table[i - 1].tport);
+            internal_ip_addr.s_addr = translation_table[i].iaddr;
+            unsigned int internal_port_to_print = ntohs(translation_table[i].iport);
+            int translated_port_to_print = ntohs(translation_table[i].tport);
             struct in_addr translated_ip_addr;
             translated_ip_addr.s_addr = public_ip.s_addr;
             printf("---------------------------------------------------------------------------------------------------------------\n");
@@ -129,8 +130,6 @@ void delete_entry(int i){
  * Callback function installed to netfilter queue
  */
 static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_data *pkt, void *data) {
-    printf("\n---------------------------------BEG OF CALLBACK--------------------------------------\n");
-
     unsigned int id = 0;
     int index;
     enum OPTION opt;
@@ -162,24 +161,46 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         // destination port
         uint16_t dport = tcph->dest;
 
-        if (tcph->ack) {
-            opt = ACK;
+        if (tcph->syn && tcph->ack) {
+            opt = SYN_ACK;
+            printf("SYN_ACK\n");
+        }
+        else if (tcph->fin && tcph->ack) {
+            opt = FIN_ACK;
+            printf("FIN_ACK\n");
         }
         else if (tcph->fin) {
             opt = FIN;
+            printf("FIN\n");
         }
         else if (tcph->syn) {
             opt = SYN;
+            printf("SYN\n");
         }
         else if (tcph->rst) {
             opt = RST;
+            printf("RST\n");
         }
+        else if (tcph->ack) {
+            opt = ACK;
+            printf("ACK\n");
+        }
+        struct in_addr saddr_to_print;
+        saddr_to_print.s_addr = saddr;
+        struct in_addr daddr_to_print;
+        daddr_to_print.s_addr = daddr;
+        printf("source_ip: %s\n", inet_ntoa(saddr_to_print));
+        printf("destin_ip: %s\n", inet_ntoa(daddr_to_print));
+        printf("source_port: %u\n", ntohs(sport));    
+        printf("destin_port: %u\n", ntohs(dport));    
 
         if ((ntohl(iph->saddr) & local_mask) == (ntohl(private_ip.s_addr) & local_mask)) {
             // outbound traffic
             if ((index = map_internal_to_tport(saddr, sport)) >= 0) {
+                tcph->source = translation_table[index].tport;
                 switch (opt) {
                 case FIN:
+                case FIN_ACK:
                 // check if packet is a RST packet. if yes => delete entry
                     switch (translation_table[index].status) {
                     case CONN:
@@ -210,16 +231,14 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
             	action = NF_DROP;
                 if (tcph->syn) {
                     if ((index = create_new_entry(saddr, sport)) >= 0) {
+                        tcph->source = translation_table[index].tport;
                         translation_table[index].status = CONN;
                         action = NF_ACCEPT;
                     }
                 }
             }
 
-            tcph->source = translation_table[index].tport;
-            printf("translated source port: %d\n", ntohs(tcph->source));
             iph->saddr = public_ip.s_addr;
-            printf("translated source ip: %s\n", inet_ntoa(*(struct in_addr *)&iph->saddr));
             iph->check = ip_checksum((unsigned char*)iph);
             tcph->check = tcp_checksum((unsigned char*)iph);
 
@@ -230,9 +249,14 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
                 iph->daddr = translation_table[index].iaddr;
                 iph->check = ip_checksum((unsigned char*)iph);
                 tcph->check = tcp_checksum((unsigned char*)iph);
+                printf("translated destination port: %u\n", ntohs(tcph->dest));
+                struct in_addr daddr_to_print;
+                daddr_to_print.s_addr = iph->daddr;
+                printf("translated desination ip address: %s\n", inet_ntoa(daddr_to_print));
 
                 switch (opt) {
                 case FIN:
+                case FIN_ACK:
                 // check if packet is a RST packet. if yes => delete entry
                     switch (translation_table[index].status) {
                     case CONN:
@@ -269,11 +293,9 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
     }
     if (action == NF_ACCEPT) {
         printf("NF_ACCEPT\n");
-        printf("\n---------------------------------END OF CALLBACK--------------------------------------\n");
         return nfq_set_verdict(qh, id, action, data_len, payload);
     } else {
         printf("NF_DROP\n");
-        printf("\n---------------------------------END OF CALLBACK--------------------------------------\n");
         return nfq_set_verdict(qh, id, action, 0, NULL); 
     }
 }
