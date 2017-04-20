@@ -152,7 +152,7 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
     // source IP
     uint32_t saddr = iph->saddr;
     // destination IP
-    uint32_t daddr = iph->daddr;
+    // uint32_t daddr = iph->daddr;
 
     action = NF_ACCEPT;
     if (iph->protocol == IPPROTO_TCP) {
@@ -166,36 +166,36 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
 
         if (tcph->syn && tcph->ack) {
             opt = SYN_ACK;
-            printf("SYN_ACK\n");
+            //printf("SYN_ACK\n");
         }
         else if (tcph->fin && tcph->ack) {
             opt = FIN_ACK;
-            printf("FIN_ACK\n");
+            //printf("FIN_ACK\n");
         }
         else if (tcph->fin) {
             opt = FIN;
-            printf("FIN\n");
+            //printf("FIN\n");
         }
         else if (tcph->syn) {
             opt = SYN;
-            printf("SYN\n");
+            //printf("SYN\n");
         }
         else if (tcph->rst) {
             opt = RST;
-            printf("RST\n");
+            //printf("RST\n");
         }
         else if (tcph->ack) {
             opt = ACK;
-            printf("ACK\n");
+            //printf("ACK\n");
         }
-        struct in_addr saddr_to_print;
-        saddr_to_print.s_addr = saddr;
-        struct in_addr daddr_to_print;
-        daddr_to_print.s_addr = daddr;
-        printf("source_ip: %s\n", inet_ntoa(saddr_to_print));
-        printf("destin_ip: %s\n", inet_ntoa(daddr_to_print));
-        printf("source_port: %u\n", ntohs(sport));    
-        printf("destin_port: %u\n", ntohs(dport));    
+        //struct in_addr saddr_to_print;
+        //saddr_to_print.s_addr = saddr;
+        //struct in_addr daddr_to_print;
+        //daddr_to_print.s_addr = daddr;
+        //printf("source_ip: %s\n", inet_ntoa(saddr_to_print));
+        //printf("destin_ip: %s\n", inet_ntoa(daddr_to_print));
+        //printf("source_port: %u\n", ntohs(sport));    
+        //printf("destin_port: %u\n", ntohs(dport));    
 
         if ((ntohl(iph->saddr) & local_mask) == (ntohl(private_ip.s_addr) & local_mask)) {
             // outbound traffic
@@ -252,10 +252,10 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
                 iph->daddr = translation_table[index].iaddr;
                 iph->check = ip_checksum((unsigned char*)iph);
                 tcph->check = tcp_checksum((unsigned char*)iph);
-                printf("translated destination port: %u\n", ntohs(tcph->dest));
-                struct in_addr daddr_to_print;
-                daddr_to_print.s_addr = iph->daddr;
-                printf("translated desination ip address: %s\n", inet_ntoa(daddr_to_print));
+                //printf("translated destination port: %u\n", ntohs(tcph->dest));
+                //struct in_addr daddr_to_print;
+                //daddr_to_print.s_addr = iph->daddr;
+                //printf("translated desination ip address: %s\n", inet_ntoa(daddr_to_print));
 
                 switch (opt) {
                 case FIN:
@@ -295,10 +295,10 @@ static int Callback(struct nfq_q_handle *qh, struct nfgenmsg *msg, struct nfq_da
         action = NF_DROP;
     }
     if (action == NF_ACCEPT) {
-        printf("NF_ACCEPT\n");
-        return nfq_set_verdict(qh, id, action, data_len, payload);
+        //printf("NF_ACCEPT\n");
+        return nfq_set_verdict(qh, id, action, data_len, (unsigned char*)payload);
     } else {
-        printf("NF_DROP\n");
+        //printf("NF_DROP\n");
         return nfq_set_verdict(qh, id, action, 0, NULL); 
     }
 }
@@ -310,7 +310,7 @@ int main(int argc, char **argv){
     initialize_NAT_table();
     struct nfq_handle *h;
     struct nfq_q_handle *qh;
-    struct nfnl_handle *nh;
+    // struct nfnl_handle *nh;
     int fd;
     int len;
     char buf[4096];
@@ -319,8 +319,6 @@ int main(int argc, char **argv){
         fprintf(stderr, "Usage: ./NAT <public ip> <internal ip> <subnet mask>\n");
         exit(-1);
     }
-    printf("%s\n", argv[1]);
-    printf("%s\n", argv[2]);
 
     inet_aton(argv[1], &public_ip);
     inet_aton(argv[2], &private_ip);
